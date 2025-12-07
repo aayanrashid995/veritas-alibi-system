@@ -179,31 +179,38 @@ if run_btn:
             
             st.divider()
             
-            # 4. VERDICT LOGIC
+           # --- 4. VERDICT LOGIC REFINEMENT ---
+
+        with col_res:
+            st.subheader("2. Analysis Results")
+            # ... (Metrics displayed here)
+            st.divider()
             st.subheader("Verdict")
             
-            # SCENARIO A: No logs matching Date/Time
+            # SCENARIO A: No logs matching Date/Time (System Failure Check)
             if feats['event_count'] == 0 and feats['dbscan_noise_points'] == 0:
-                st.markdown('<div class="status-box status-grey">NO DATA FOUND</div>', unsafe_allow_html=True)
-                st.write(f"No logs found for **{incident_date}** between **{start_time}** and **{end_time}**.")
+                st.markdown('<div class="status-box status-red">DATA FAILURE: NO LOGS FOUND</div>', unsafe_allow_html=True)
+                st.write(f"No logs found for this specific timeframe.")
             
-            # SCENARIO B: Only System Noise (The Passive User)
-            elif feats['event_count'] == 0:
-                st.markdown('<div class="status-box status-red">NEGATIVE: INACTIVE</div>', unsafe_allow_html=True)
-                st.write("**Only background system processes found.** No human interaction detected.")
-                
-            # SCENARIO C: Confirmed Activity
-            elif final_prob > 0.60:
+            # SCENARIO B: Confirmed Activity (Probability > 65%)
+            elif final_prob > 0.65:
                 st.markdown('<div class="status-box status-green">POSITIVE: CONFIRMED</div>', unsafe_allow_html=True)
                 st.write("**Human Presence Confirmed.**")
                 st.metric("Probability", f"{final_prob*100:.1f}%")
                 
-            # SCENARIO D: Weak/Ambiguous
-            else:
+            # SCENARIO C: Inconclusive (Ambiguous Zone: 35% to 65%)
+            elif final_prob >= 0.35 and final_prob <= 0.65:
                 st.markdown('<div class="status-box status-yellow">INCONCLUSIVE</div>', unsafe_allow_html=True)
-                st.write("**High Noise / Low Confidence.**")
-                st.write(f"Activity detected but statistically weak.{penalty_text}")
+                st.write(f"**Ambiguous Data.** Cannot definitively confirm presence due to mixed signals.")
                 st.metric("Probability", f"{final_prob*100:.1f}%")
+                
+            # SCENARIO D: NEGATIVE (All scores below 35% fall here)
+            else: # Covers all probabilities < 0.35 (35%)
+                st.markdown('<div class="status-box status-red">NEGATIVE: PRESENCE NOT ESTABLISHED</div>', unsafe_allow_html=True)
+                st.write(f"**Activity matches system baselines.** Minimal evidence of human interaction.")
+                st.metric("Probability", f"{final_prob*100:.1f}%")
+                if penalty_text:
+                    st.caption(f"Reason: Confidence penalized due to high noise.")
 
     st.markdown("---")
     st.caption(f"Analysis run for Case {case_id} on {incident_date}")
