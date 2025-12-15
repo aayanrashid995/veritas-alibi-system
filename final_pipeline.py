@@ -5,6 +5,10 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import classification_report, accuracy_score
+from sklearn import set_config # NEW IMPORT
+
+# CRITICAL FIX: Set global configuration for consistent feature name handling
+set_config(transform_output="pandas") 
 
 # Explicit list of feature names used for training and deployment
 FEATURES_USED = [
@@ -75,6 +79,7 @@ if __name__ == "__main__":
     
     # 3. Scale
     scaler = StandardScaler()
+    # Ensure scaling is done on the full DataFrame object to retain feature names
     X_train_scaled = scaler.fit_transform(X_train)
     X_test_scaled = scaler.transform(X_test)
     
@@ -90,11 +95,13 @@ if __name__ == "__main__":
     print(classification_report(y_test, preds))
     
     # 6. Final Fit and Save Artifacts
-    # Retrain on all data for the final saved model
+    # CRITICAL: Fit scaler and model on the full feature DataFrame (X)
+    # This guarantees the scaler saves the feature names correctly.
     scaler.fit(X) 
     model.fit(scaler.transform(X), y) 
     
     joblib.dump(model, 'veritas_model.pkl')
     joblib.dump(scaler, 'veritas_scaler.pkl')
-    joblib.dump(scaler.transform(X.iloc[:100]), 'veritas_background.pkl')
+    # Save background data from the DataFrame with explicit column names
+    joblib.dump(X.iloc[:100], 'veritas_background.pkl') 
     print("💾 System Artifacts Saved. Run 'app.py' to deploy.")
