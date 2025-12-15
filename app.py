@@ -194,21 +194,25 @@ if analyze and model:
         
         # B. PREPARE INPUT FOR MODEL (CRITICAL FIX: Ensure correct columns/order)
         
-        # 1. Create a DataFrame from the feature dictionary
-        input_data = {k: [feats[k]] for k in FEATURES_USED}
-        input_df = pd.DataFrame(input_data)
+        # 1. Create a dictionary of the input values in the exact order required
+        input_values = {k: [feats[k]] for k in FEATURES_USED}
+        
+        # 2. Create the DataFrame using the ordered keys as columns
+        input_df = pd.DataFrame(input_values, columns=FEATURES_USED)
 
-        # 2. Scale the data using the TRAINED scaler
+
+        # 3. Scale the data using the TRAINED scaler
         prob = 0.0
         if feats['event_count'] > 0:
             try:
+                # SCALING IS PERFORMED HERE
                 input_scaled = scaler.transform(input_df)
                 # C. PREDICT
                 prob = model.predict_proba(input_scaled)[0][1]
             except ValueError as e:
                 # Catch feature name mismatch errors explicitly
-                st.error(f"Prediction Error (Feature Mismatch): {e}")
-                st.write(f"Expected Features: {FEATURES_USED}")
+                st.error(f"Prediction Error (Scaler/Model Mismatch): The feature names are not recognized by the saved scaler.")
+                st.error("Please ensure the version of Pandas/scikit-learn is consistent across training and deployment, and rerun 'final_pipeline.py'.")
                 st.stop()
 
 
