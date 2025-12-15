@@ -6,6 +6,15 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import classification_report, accuracy_score
 
+# Explicit list of feature names used for training and deployment
+FEATURES_USED = [
+    'event_count', 
+    'unique_ip_count', 
+    'action_diversity', 
+    'dbscan_noise_points', 
+    'critical_event_count'
+]
+
 def generate_realistic_forensic_data(n_samples=3000):
     np.random.seed(42)
     data = []
@@ -49,14 +58,16 @@ def generate_realistic_forensic_data(n_samples=3000):
 
         data.append([event_count, unique_ips, action_div, noise, critical, is_active])
         
-    return pd.DataFrame(data, columns=['event_count', 'unique_ip_count', 'action_diversity', 'dbscan_noise_points', 'critical_event_count', 'verdict'])
+    return pd.DataFrame(data, columns=FEATURES_USED + ['verdict'])
 
 if __name__ == "__main__":
     print("🧠 Training Realistic Forensic Model...")
     
-    # 1. Generate Data (Now with noise/errors)
+    # 1. Generate Data 
     df = generate_realistic_forensic_data()
-    X = df.drop('verdict', axis=1)
+    
+    # Use the defined features for X
+    X = df[FEATURES_USED] 
     y = df['verdict']
     
     # 2. Split
@@ -67,22 +78,23 @@ if __name__ == "__main__":
     X_train_scaled = scaler.fit_transform(X_train)
     X_test_scaled = scaler.transform(X_test)
     
-    # 4. Train (Reduced depth to prevent overfitting on the noise)
+    # 4. Train 
     model = RandomForestClassifier(n_estimators=100, max_depth=8, random_state=42)
     model.fit(X_train_scaled, y_train)
     
-    # 5. Evaluate (Should now be ~0.90 - 0.96, NOT 1.0)
+    # 5. Evaluate
     preds = model.predict(X_test_scaled)
     acc = accuracy_score(y_test, preds)
     print(f"\n✅ Realistic Accuracy: {acc*100:.2f}%")
-    print("Detailed Report (Notice F1 is not 1.0):")
+    print("Detailed Report:")
     print(classification_report(y_test, preds))
     
-    # 6. Save
+    # 6. Final Fit and Save Artifacts
+    # Retrain on all data for the final saved model
     scaler.fit(X) 
-    model.fit(scaler.transform(X), y)
+    model.fit(scaler.transform(X), y) 
     
     joblib.dump(model, 'veritas_model.pkl')
     joblib.dump(scaler, 'veritas_scaler.pkl')
     joblib.dump(scaler.transform(X.iloc[:100]), 'veritas_background.pkl')
-    print("💾 System Artifacts Saved.")
+    print("💾 System Artifacts Saved. Run 'app.py' to deploy.")

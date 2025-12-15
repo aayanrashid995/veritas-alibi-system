@@ -8,6 +8,15 @@ import shap
 import matplotlib.pyplot as plt
 from datetime import datetime, time as dt_time
 
+# --- Explicitly define the feature names used by the trained model/scaler ---
+FEATURES_USED = [
+    'event_count', 
+    'unique_ip_count', 
+    'action_diversity', 
+    'dbscan_noise_points', 
+    'critical_event_count'
+]
+
 # --- 1. CONFIGURATION & CSS ---
 st.set_page_config(page_title="VERITAS FORENSICS", layout="wide", page_icon="🛡️")
 
@@ -38,13 +47,15 @@ st.markdown("""
 # --- 2. LOAD SYSTEM ---
 @st.cache_resource
 def load_system():
+    # Attempt to load saved models and scaler
     try:
         model = joblib.load('veritas_model.pkl')
         scaler = joblib.load('veritas_scaler.pkl')
         try:
             background = joblib.load('veritas_background.pkl')
         except:
-            background = np.zeros((1, 5)) 
+            # Fallback if background data is missing (for SHAP)
+            background = np.zeros((1, len(FEATURES_USED))) 
         return model, scaler, background
     except FileNotFoundError:
         return None, None, None
@@ -53,6 +64,7 @@ model, scaler, background = load_system()
 
 # --- 3. ROBUST PARSER ---
 def parse_logs_robust(log_content, target_date, start_t, end_t):
+    # NOTE: This parser simulates the feature extraction logic of final_pipeline.py
     lines = log_content.strip().split('\n')
     
     active_events = 0
@@ -62,6 +74,7 @@ def parse_logs_robust(log_content, target_date, start_t, end_t):
     critical_count = 0 
     debug_log = []
     
+    # Define keywords used in the simulated data generation logic
     NOISE_SOURCES = ["igccservice", "RestartManager", "BTHUSB", "Netwtw", "Time-Service", "DCOM", "Win32k", "Security-SPP"]
     CRITICAL_IDS = ["4624", "4672", "4103", "4104", "1000", "10010", "4798"] 
 
@@ -72,7 +85,7 @@ def parse_logs_robust(log_content, target_date, start_t, end_t):
         line = line.strip()
         if not line or line.startswith('"TimeCreated"') or line.startswith("#"): continue
         
-        # Split by comma (Clean CSV format)
+        # Assume input log format is: TimeCreated,ProviderName,EventID,...
         tokens = line.split(',')
         
         if len(tokens) >= 3:
@@ -105,6 +118,7 @@ def parse_logs_robust(log_content, target_date, start_t, end_t):
                     critical_count += 1
                     if len(debug_log) < 3: debug_log.append(f"{t_str}: ID {evt_id} ({provider})")
 
+    # The features must be returned in the order defined by FEATURES_USED
     return {
         'event_count': active_events,
         'unique_ip_count': len(unique_sources),
@@ -129,7 +143,7 @@ end_time = st.sidebar.time_input("End Time", value=dt_time(22, 0))     # 10 PM
 # Sidebar - File Upload (RESTORED)
 st.sidebar.markdown("---")
 st.sidebar.subheader("3. Evidence Upload")
-uploaded_file = st.sidebar.file_uploader("Upload Clean CSV Logs", type=['txt', 'csv'])
+uploaded_file = st.sidebar.file_uploader("Upload Clean CSV Logs (TimeCreated,ProviderName,EventID,...)", type=['txt', 'csv'])
 
 # Main Layout
 col1, col2 = st.columns([1, 1])
@@ -142,12 +156,17 @@ with col1:
         initial_text = uploaded_file.getvalue().decode("utf-8")
         
     raw_text = st.text_area("Log Input (Paste or Upload)", value=initial_text, height=300, 
-                            help="Paste the content of 'final_clean_logs.txt' here, or upload it via sidebar.")
+                            help="Paste the content of raw logs here (e.g., event logs, network traces).")
 
 with col2:
     st.subheader("Control & Status")
-    st.info("System Ready. Awaiting execution command.")
-    analyze = st.button("RUN FORENSIC ANALYSIS", type="primary", use_container_width=True)
+    
+    if not model:
+        st.error("AI System Not Initialized (Model/Scaler files missing). Run 'final_pipeline.py' first!")
+    else:
+        st.info("AI System Ready. Awaiting execution command.")
+    
+    analyze = st.button("RUN FORENSIC ANALYSIS", type="primary", use_container_width=True, disabled=not model)
     
     if analyze and raw_text:
         # Loading Animation
@@ -166,25 +185,32 @@ with col2:
                 st.warning("No critical artifacts (Logons/Privileges) found.")
 
 # --- 5. EXECUTION ---
-if analyze:
-    if not model:
-        st.error("AI Brain Missing. Please run pipeline script.")
-    elif not raw_text:
+if analyze and model:
+    if not raw_text:
         st.warning("No data found.")
     else:
-        # B. PARSE
+        # A. PARSE & FEATURE EXTRACTION
         feats = parse_logs_robust(raw_text, analysis_date, start_time, end_time)
         
-        # C. PREDICT
-        input_df = pd.DataFrame([feats])
-        input_df = input_df[['event_count', 'unique_ip_count', 'action_diversity', 
-                           'dbscan_noise_points', 'critical_event_count']]
+        # B. PREPARE INPUT FOR MODEL (CRITICAL FIX: Ensure correct columns/order)
         
-        # Get AI Probability
+        # 1. Create a DataFrame from the feature dictionary
+        input_data = {k: [feats[k]] for k in FEATURES_USED}
+        input_df = pd.DataFrame(input_data)
+
+        # 2. Scale the data using the TRAINED scaler
         prob = 0.0
         if feats['event_count'] > 0:
-            input_scaled = scaler.transform(input_df)
-            prob = model.predict_proba(input_scaled)[0][1]
+            try:
+                input_scaled = scaler.transform(input_df)
+                # C. PREDICT
+                prob = model.predict_proba(input_scaled)[0][1]
+            except ValueError as e:
+                # Catch feature name mismatch errors explicitly
+                st.error(f"Prediction Error (Feature Mismatch): {e}")
+                st.write(f"Expected Features: {FEATURES_USED}")
+                st.stop()
+
 
         # D. VERDICT DASHBOARD
         st.markdown("---")
@@ -199,46 +225,72 @@ if analyze:
         
         # Heuristic Override for Definitive Proof (Logins are gold standard)
         if feats['critical_event_count'] > 0:
-             prob = max(prob, 0.95)
+             prob = max(prob, 0.95) # Boost probability if critical evidence exists
 
         if prob > 0.65:
             st.markdown(f'<div class="status-box status-green">POSITIVE: PRESENCE CONFIRMED</div>', unsafe_allow_html=True)
             if feats['critical_event_count'] > 0:
                 st.write(f"**Definitive Proof.** {feats['critical_event_count']} critical actions (Logon/Privilege) validate the alibi.")
             else:
-                st.write("**Strong Signal.** High volume of complex activity detected.")
+                st.write("**Strong Signal.** High volume of complex activity detected by the AI.")
                 
         elif prob < 0.35:
             st.markdown(f'<div class="status-box status-red">NEGATIVE: PRESENCE NOT ESTABLISHED</div>', unsafe_allow_html=True)
-            st.write("**Only background system processes detected.**")
+            st.write("**Only background system processes detected.** The AI model found no strong indicators of user activity.")
         else:
             st.markdown(f'<div class="status-box status-yellow">INCONCLUSIVE</div>', unsafe_allow_html=True)
-            st.write("**Ambiguous Activity.** Events detected but lack definitive user signature.")
+            st.write("**Ambiguous Activity.** Events detected but lack definitive user signature, placing the verdict near the AI threshold.")
 
-        # E. SHAP (FIXED)
+        # E. SHAP Explanation
         st.markdown("---")
-        st.write("### AI Explainability Engine")
+        st.write("### AI Explainability Engine (SHAP)")
         
         try:
             explainer = shap.TreeExplainer(model)
             shap_vals = explainer.shap_values(input_scaled)
             
-            # Handle Matrix Shape
-            if isinstance(shap_vals, list):
-                sv_single = shap_vals[1][0] 
+            # --- FIX: Simplify scalar extraction to resolve length-1 array error ---
+            
+            # 1. Determine the expected_value for the positive class (1)
+            # Check if expected_value is an array (typical for balanced RF)
+            if isinstance(explainer.expected_value, np.ndarray) and len(explainer.expected_value) == 2:
                 base_val = explainer.expected_value[1]
             else:
-                sv_single = shap_vals[0, :, 1] if len(shap_vals.shape) == 3 else shap_vals[0]
+                # If it's a single scalar, use it directly
                 base_val = explainer.expected_value
             
+            # 2. Determine the SHAP values for the positive class (1)
+            if isinstance(shap_vals, list):
+                # For TreeExplainer on multi-output models, shap_vals is a list of arrays.
+                # We select the array for the positive class (index 1) and the first (and only) instance (index 0).
+                sv_single = shap_vals[1][0]
+            elif len(shap_vals.shape) == 3:
+                # Fallback for complex shapes
+                sv_single = shap_vals[0, :, 1]
+            else:
+                # Final fallback for simple shapes
+                sv_single = shap_vals[0]
+
+
+            # The error usually occurs because the library tries to convert the base_val 
+            # (which is an array [0.X, 0.Y]) to a scalar.
+            # By enforcing base_val selection as above, the error should be resolved.
+            
             fig, ax = plt.subplots(figsize=(8,4))
-            shap.plots.waterfall(shap.Explanation(
+            
+            # Create a simplified Explanation object for the waterfall plot
+            explanation_data = shap.Explanation(
                 values=sv_single, 
                 base_values=base_val, 
                 data=input_df.iloc[0].values, 
                 feature_names=input_df.columns
-            ), show=False)
+            )
+            
+            # Generate and display the plot
+            shap.plots.waterfall(explanation_data, show=False)
             st.pyplot(fig)
             
         except Exception as e:
-            st.warning("Explanation graph skipped (Data shape mismatch in library). Verdict is valid.")
+            # Display a human-readable error instead of skipping silently
+            st.warning(f"SHAP Visualization Error: Could not generate waterfall plot. Verdict remains valid.")
+            st.error(f"Debug Info (Scalar Error Fix Applied): {e}")
