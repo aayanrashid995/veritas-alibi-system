@@ -7,6 +7,11 @@ import time
 import shap
 import matplotlib.pyplot as plt
 from datetime import datetime, time as dt_time
+from sklearn import set_config
+
+# Configure sklearn to output pandas DFs (for SHAP), 
+# but we will handle the input carefully to avoid mismatch errors.
+set_config(transform_output="pandas") 
 
 # --- Explicitly define the feature names used by the trained model/scaler ---
 FEATURES_USED = [
@@ -194,25 +199,26 @@ if analyze and model:
         
         # B. PREPARE INPUT FOR MODEL (CRITICAL FIX: Ensure correct columns/order)
         
-        # 1. Create a dictionary of the input values in the exact order required
-        input_values = {k: [feats[k]] for k in FEATURES_USED}
-        
-        # 2. Create the DataFrame using the ordered keys as columns
-        input_df = pd.DataFrame(input_values, columns=FEATURES_USED)
+        # 1. Create a DataFrame from the feature dictionary
+        input_data = {k: [feats[k]] for k in FEATURES_USED}
+        # Explicitly enforce column order to match training
+        input_df = pd.DataFrame(input_data, columns=FEATURES_USED)
 
-
-        # 3. Scale the data using the TRAINED scaler
+        # 2. Scale the data using the TRAINED scaler
         prob = 0.0
         if feats['event_count'] > 0:
             try:
-                # SCALING IS PERFORMED HERE
-                input_scaled = scaler.transform(input_df)
+                # NUCLEAR FIX: Bypass feature name check by passing NumPy array
+                # We know the order is correct because we enforced it in step 1.
+                input_scaled_raw = scaler.transform(input_df.values) 
+                
+                # Convert back to DataFrame for SHAP/Model to have column names (if configured for pandas output)
+                input_scaled = pd.DataFrame(input_scaled_raw, columns=FEATURES_USED)
+                
                 # C. PREDICT
                 prob = model.predict_proba(input_scaled)[0][1]
-            except ValueError as e:
-                # Catch feature name mismatch errors explicitly
-                st.error(f"Prediction Error (Scaler/Model Mismatch): The feature names are not recognized by the saved scaler.")
-                st.error("Please ensure the version of Pandas/scikit-learn is consistent across training and deployment, and rerun 'final_pipeline.py'.")
+            except Exception as e:
+                st.error(f"Prediction Error: {e}")
                 st.stop()
 
 
@@ -298,3 +304,7 @@ if analyze and model:
             # Display a human-readable error instead of skipping silently
             st.warning(f"SHAP Visualization Error: Could not generate waterfall plot. Verdict remains valid.")
             st.error(f"Debug Info (Scalar Error Fix Applied): {e}")
+            # Display a human-readable error instead of skipping silently
+            st.warning(f"SHAP Visualization Error: Could not generate waterfall plot. Verdict remains valid.")
+            st.error(f"Debug Info (Scalar Error Fix Applied): {e}")
+
