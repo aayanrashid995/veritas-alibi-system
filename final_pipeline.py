@@ -10,7 +10,7 @@ from sklearn import set_config
 # CRITICAL CONFIGURATION: Ensure Pandas output to fix feature name mismatch in deployment
 set_config(transform_output="pandas")
 
-# 1. Define the EXACT feature list (5 Features)
+# 1. Define the EXACT feature list (5 Features) - Global Source of Truth
 FEATURES_USED = [
     'event_count', 
     'unique_ip_count', 
@@ -102,11 +102,8 @@ if __name__ == "__main__":
     
     joblib.dump(model, 'veritas_model.pkl')
     joblib.dump(scaler, 'veritas_scaler.pkl')
+    # Save a small sample for SHAP background
     joblib.dump(X.iloc[:100], 'veritas_background.pkl')
     
     print("💾 System Artifacts Saved. The Scaler now expects exactly 5 features.")
-    joblib.dump(scaler, 'veritas_scaler.pkl')
-    # Save background data from the DataFrame with explicit column names
-    joblib.dump(X.iloc[:100], 'veritas_background.pkl') 
 
-    print("💾 System Artifacts Saved. Run 'app.py' to deploy.")
